@@ -15,6 +15,7 @@
 // Initialize static member
 std::vector<ApplicationLauncher::Application> ApplicationLauncher::_registeredApplications;
 
+// Ensure these methods are defined
 bool ApplicationLauncher::launchApplication(const std::string& appId) {
     auto app = findApplicationById(appId);
     if (!app) {
@@ -35,8 +36,63 @@ bool ApplicationLauncher::launchApplication(const std::string& appId) {
     }
 }
 
-// Implemented below: launchExecutable, launchWebsite, launchSystemCommand methods...
+// Method to launch with custom path and arguments
+bool ApplicationLauncher::launchApplication(
+    const std::string& path, 
+    const std::vector<std::string>& arguments
+) {
+    // Use ShellExecute for launching
+    SHELLEXECUTEINFOA sei = { sizeof(SHELLEXECUTEINFO) };
+    sei.fMask = SEE_MASK_NOCLOSE | SEE_MASK_NOCLOSEPROCESS;
+    sei.hwnd = NULL;
+    sei.lpVerb = "open";
+    sei.lpFile = path.c_str();
+    
+    // Combine arguments into a single string if not empty
+    std::string args;
+    for (const auto& arg : arguments) {
+        args += arg + " ";
+    }
+    sei.lpParameters = args.empty() ? NULL : args.c_str();
+    
+    sei.nShow = SW_SHOWNORMAL;
 
+    if (!ShellExecuteExA(&sei)) {
+        DWORD error = GetLastError();
+        std::cerr << "Failed to launch application. Error code: " << error 
+                  << ", Path: " << path << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool ApplicationLauncher::registerApplication(const Application& app) {
+    // Check for duplicate
+    if (findApplicationById(app.id)) {
+        std::cerr << "Application already registered: " << app.id << std::endl;
+        return false;
+    }
+
+    _registeredApplications.push_back(app);
+    return true;
+}
+
+std::vector<ApplicationLauncher::Application> ApplicationLauncher::getRegisteredApplications() {
+    return _registeredApplications;
+}
+
+std::optional<ApplicationLauncher::Application> ApplicationLauncher::findApplicationById(const std::string& appId) {
+    auto it = std::find_if(_registeredApplications.begin(), _registeredApplications.end(),
+        [&appId](const Application& app) { return app.id == appId; });
+    
+    if (it != _registeredApplications.end()) {
+        return *it;
+    }
+    return std::nullopt;
+}
+
+// Implementation of private launch methods
 bool ApplicationLauncher::launchExecutable(const Application& app) {
     // Construct full command with arguments
     std::string fullCommand = app.path;
@@ -92,29 +148,4 @@ bool ApplicationLauncher::launchSystemCommand(const Application& app) {
     }
 
     return true;
-}
-
-bool ApplicationLauncher::registerApplication(const Application& app) {
-    // Check for duplicate
-    if (findApplicationById(app.id)) {
-        std::cerr << "Application already registered: " << app.id << std::endl;
-        return false;
-    }
-
-    _registeredApplications.push_back(app);
-    return true;
-}
-
-std::vector<ApplicationLauncher::Application> ApplicationLauncher::getRegisteredApplications() {
-    return _registeredApplications;
-}
-
-std::optional<ApplicationLauncher::Application> ApplicationLauncher::findApplicationById(const std::string& appId) {
-    auto it = std::find_if(_registeredApplications.begin(), _registeredApplications.end(),
-        [&appId](const Application& app) { return app.id == appId; });
-    
-    if (it != _registeredApplications.end()) {
-        return *it;
-    }
-    return std::nullopt;
 }
