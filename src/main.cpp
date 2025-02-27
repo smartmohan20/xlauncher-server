@@ -51,12 +51,38 @@ int main(int argc, char** argv) {
                 std::string type = message.value("type", "");
                 
                 if (type == "launch_app") {
-                    std::string appId = message["data"]["id"];
-                    bool launched = ApplicationLauncher::launchApplication(appId);
+                    bool launched = false;
                     
-                    response["type"] = "launch_result";
-                    response["success"] = launched;
-                    response["app_id"] = appId;
+                    // Check if a custom path is provided
+                    if (message["data"].contains("path")) {
+                        std::string path = message["data"]["path"];
+                        
+                        // Get arguments if provided, otherwise use empty vector
+                        std::vector<std::string> arguments;
+                        if (message["data"].contains("arguments")) {
+                            arguments = message["data"]["arguments"].get<std::vector<std::string>>();
+                        }
+                        
+                        // Launch with custom path and arguments
+                        launched = ApplicationLauncher::launchApplication(path, arguments);
+                        
+                        response["type"] = "launch_result";
+                        response["success"] = launched;
+                        response["path"] = path;
+                    } 
+                    // Existing ID-based launch remains the same
+                    else if (message["data"].contains("id")) {
+                        std::string appId = message["data"]["id"];
+                        launched = ApplicationLauncher::launchApplication(appId);
+                        
+                        response["type"] = "launch_result";
+                        response["success"] = launched;
+                        response["app_id"] = appId;
+                    }
+                    else {
+                        response["type"] = "error";
+                        response["message"] = "No path or ID provided";
+                    }
                 }
                 else if (type == "list_apps") {
                     auto apps = ApplicationLauncher::getRegisteredApplications();
