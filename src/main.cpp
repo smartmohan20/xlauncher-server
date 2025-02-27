@@ -1,7 +1,9 @@
 #include "server/server.h"
+#include "application/app_launcher.h"
 #include "dotenv.h"
 #include <iostream>
 #include <thread>
+#include <nlohmann/json.hpp>
 
 int main(int argc, char** argv) {
     try {
@@ -24,6 +26,64 @@ int main(int argc, char** argv) {
         // Create a server instance with the port from environment
         Server server(port);
 
+        // Register some sample applications
+        ApplicationLauncher::registerApplication({
+            "chrome_google", 
+            "Google Chrome", 
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", 
+            ApplicationLauncher::ApplicationType::EXECUTABLE,
+            {"google.com"}
+        });
+
+        ApplicationLauncher::registerApplication({
+            "notepad", 
+            "Notepad", 
+            "C:\\Windows\\System32\\notepad.exe", 
+            ApplicationLauncher::ApplicationType::EXECUTABLE,
+            {}
+        });
+
+        // Configure message handler to support application launching
+        server.setMessageHandler([](const nlohmann::json& message) {
+            nlohmann::json response;
+            
+            try {
+                std::string type = message.value("type", "");
+                
+                if (type == "launch_app") {
+                    std::string appId = message["data"]["id"];
+                    bool launched = ApplicationLauncher::launchApplication(appId);
+                    
+                    response["type"] = "launch_result";
+                    response["success"] = launched;
+                    response["app_id"] = appId;
+                }
+                else if (type == "list_apps") {
+                    auto apps = ApplicationLauncher::getRegisteredApplications();
+                    
+                    response["type"] = "app_list";
+                    response["apps"] = nlohmann::json::array();
+                    
+                    for (const auto& app : apps) {
+                        response["apps"].push_back({
+                            {"id", app.id},
+                            {"name", app.name},
+                            {"path", app.path}
+                        });
+                    }
+                }
+                else {
+                    response["type"] = "error";
+                    response["message"] = "Unknown message type";
+                }
+            } catch (const std::exception& e) {
+                response["type"] = "error";
+                response["message"] = e.what();
+            }
+            
+            return response;
+        });
+
         std::cout << "Starting server on port " << port << "..." << std::endl;
 
         // Start server directly in main thread for better error handling
@@ -31,10 +91,6 @@ int main(int argc, char** argv) {
         
         if (!success) {
             std::cerr << "Server failed to start: " << errorMsg << std::endl;
-            std::cerr << "Possible solutions:" << std::endl;
-            std::cerr << "- Try a different port (current: " << port << ")" << std::endl;
-            std::cerr << "- Check if you have any antivirus or firewall blocking socket operations" << std::endl;
-            std::cerr << "- Verify no other application is using this port" << std::endl;
             return 1;
         }
 
