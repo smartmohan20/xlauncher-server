@@ -1,31 +1,44 @@
 #include "server.h"
 #include <iostream>
 
-// Constructor to initialize the server with a port
 Server::Server(int port) : _socketServer(port) {
     initialize();
 }
 
-// Initialize server components
+Server::~Server() {
+    _socketServer.stop();
+}
+
 void Server::initialize() {
     std::cout << "Initializing server components..." << std::endl;
     
-    // Set up message handler
     _socketServer.setMessageHandler([this](const std::string& message) {
-        // Handle received messages here
-        std::cout << "Received message: " << message << std::endl;
+        try {
+            auto jsonMessage = nlohmann::json::parse(message);
+            
+            if (_messageHandler) {
+                auto response = _messageHandler(jsonMessage);
+                return response.dump();
+            }
+            
+            std::cout << "Received message: " << message << std::endl;
+            return std::string();
+        } catch (const std::exception& e) {
+            std::cerr << "Error processing message: " << e.what() << std::endl;
+            return std::string();
+        }
     });
 }
 
-// Main server loop
 std::pair<bool, std::string> Server::run() {
     std::cout << "Starting server on port " << _socketServer.getPort() << "..." << std::endl;
-    
-    // Start the socket server
     return _socketServer.start();
 }
 
-// Get server port
 int Server::getPort() const {
     return _socketServer.getPort();
+}
+
+void Server::setMessageHandler(std::function<nlohmann::json(const nlohmann::json&)> handler) {
+    _messageHandler = std::move(handler);
 }
