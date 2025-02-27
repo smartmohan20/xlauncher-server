@@ -2,19 +2,23 @@
 #include "websocket_server.h"
 #include <utility>
 #include <string>
+#include <functional>
+#include <nlohmann/json.hpp>
 
-// Main server class that manages socket server and application logic
 class Server {
 public:
     explicit Server(int port);
+    ~Server();
     
-    // Return type remains the same
     std::pair<bool, std::string> run();
     
     int getPort() const;
 
+    void setMessageHandler(std::function<nlohmann::json(const nlohmann::json&)> handler);
+
 private:
     SimpleSocketServer _socketServer;
+    std::function<nlohmann::json(const nlohmann::json&)> _messageHandler;
 
     void initialize();
 };
