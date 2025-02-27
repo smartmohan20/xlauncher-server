@@ -28,6 +28,12 @@ public:
     // Launch an application by its ID
     static bool launchApplication(const std::string& appId);
 
+    // New method to launch with custom path and arguments
+    static bool launchApplication(
+        const std::string& path, 
+        const std::vector<std::string>& arguments
+    );
+
     // Register a new application
     static bool registerApplication(const Application& app);
 
