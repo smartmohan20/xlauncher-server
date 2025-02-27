@@ -219,5 +219,8 @@ settings-local.json
 temp/
 tmp/
 
+# Ignore generated headers
+/include/dotenv.h
+
 # Local files
 local/
