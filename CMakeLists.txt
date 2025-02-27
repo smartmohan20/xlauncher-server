@@ -1,46 +1,50 @@
+# Vcpkg Toolchain Configuration
+if(DEFINED ENV{VCPKG_ROOT})
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+elseif(DEFINED CMAKE_TOOLCHAIN_FILE)
+    # Do nothing, toolchain file is already set
+else()
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+endif()
+
 cmake_minimum_required(VERSION 3.12)
 project(xlauncher-server)
 
+# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find ZLIB
+# Find required packages
+find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
-include_directories(${ZLIB_INCLUDE_DIRS})
 
 # Add IXWebSocket library
 add_subdirectory(lib/ixwebsocket)
 
-# Add nlohmann/json library
-add_subdirectory(lib/json)
-
-# Create include directory if it doesn't exist
-file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/include)
-
-# Copy our custom dotenv implementation to the include directory
-configure_file(
-    ${CMAKE_SOURCE_DIR}/src/dotenv.h
-    ${CMAKE_SOURCE_DIR}/include/dotenv.h
-    COPYONLY
-)
-
+# Include directories
 include_directories(
     include
-    lib/ixwebsocket
-    ${CMAKE_SOURCE_DIR}/src
+    src
+    ${OPENSSL_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/lib/ixwebsocket
 )
 
+# Create executable
 add_executable(xlauncher-server
     src/main.cpp
     src/server/server.cpp
     src/server/websocket_server.cpp
+    src/application/app_launcher.cpp
 )
 
+# Link libraries
 target_link_libraries(xlauncher-server
     PRIVATE ixwebsocket
-    PRIVATE nlohmann_json::nlohmann_json
-    Shell32
-    ws2_32
-    crypt32
+    PRIVATE OpenSSL::SSL
+    PRIVATE OpenSSL::Crypto
+    PRIVATE Shell32      # For ShellExecute
+    PRIVATE ws2_32
+    PRIVATE crypt32
     ${ZLIB_LIBRARIES}
 )
 
