@@ -58,7 +58,7 @@ InputHandler::InputEvent InputHandler::parseInputEvent(const nlohmann::json& eve
     InputEvent event;
     
     // Extract event type
-    std::string eventType = eventJson["type"];
+    std::string eventType = eventJson["eventType"];
     
     if (eventType == "mousemove") {
         event.type = EventType::MOUSE_MOVE;
