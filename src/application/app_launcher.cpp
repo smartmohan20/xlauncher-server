@@ -24,14 +24,14 @@
 // Initialize static member
 std::vector<ApplicationLauncher::Application> ApplicationLauncher::_registeredApplications;
 
-// Base64 encoding helper function
-std::string base64Encode(const std::vector<unsigned char>& data) {
+// Base64 encoding helper function - make it static to limit its scope to this file
+static std::string base64Encode(const unsigned char* data, size_t length) {
     BIO* bio = BIO_new(BIO_s_mem());
     BIO* b64 = BIO_new(BIO_f_base64());
     BIO_push(b64, bio);
     BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
     
-    BIO_write(b64, data.data(), static_cast<int>(data.size()));
+    BIO_write(b64, data, static_cast<int>(length));
     BIO_flush(b64);
     
     BUF_MEM* bufferPtr;
@@ -44,8 +44,8 @@ std::string base64Encode(const std::vector<unsigned char>& data) {
     return result;
 }
 
-// Bitmap to PNG/JPEG conversion and encoding
-std::optional<ApplicationLauncher::IconData> convertBitmapToBase64(HBITMAP hBitmap) {
+// Create a BMP file in memory and encode it to base64
+static std::optional<ApplicationLauncher::IconData> convertBitmapToBase64(HBITMAP hBitmap) {
     BITMAP bm;
     if (!GetObject(hBitmap, sizeof(BITMAP), &bm)) {
         std::cerr << "Failed to get bitmap info" << std::endl;
@@ -62,58 +62,56 @@ std::optional<ApplicationLauncher::IconData> convertBitmapToBase64(HBITMAP hBitm
     // Select the bitmap into the DC
     HBITMAP hOldBitmap = (HBITMAP)SelectObject(hDC, hBitmap);
     
-    // Create a DIB section
+    // Create a DIB section that contains the image with header and pixel data
     BITMAPINFOHEADER bi;
     ZeroMemory(&bi, sizeof(BITMAPINFOHEADER));
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = bm.bmWidth;
     bi.biHeight = bm.bmHeight;
     bi.biPlanes = 1;
-    bi.biBitCount = 32; // 32-bit ARGB format
+    bi.biBitCount = 24; // 24-bit RGB format for better compatibility
     bi.biCompression = BI_RGB;
     
-    unsigned char* bits = NULL;
-    HBITMAP hDIBSection = CreateDIBSection(hDC, (BITMAPINFO*)&bi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
-    if (!hDIBSection || !bits) {
+    // Calculate row size and pad to 4-byte boundary
+    int rowSize = ((bi.biWidth * bi.biBitCount + 31) / 32) * 4;
+    int dataSize = rowSize * abs(bi.biHeight);
+    
+    // Create BMP file headers
+    BITMAPFILEHEADER bmfh;
+    bmfh.bfType = 0x4D42; // "BM"
+    bmfh.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + dataSize;
+    bmfh.bfReserved1 = 0;
+    bmfh.bfReserved2 = 0;
+    bmfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    
+    // Allocate memory for BMP file
+    std::vector<unsigned char> bmpData(bmfh.bfSize);
+    
+    // Copy file header
+    memcpy(bmpData.data(), &bmfh, sizeof(BITMAPFILEHEADER));
+    
+    // Copy info header
+    memcpy(bmpData.data() + sizeof(BITMAPFILEHEADER), &bi, sizeof(BITMAPINFOHEADER));
+    
+    // Get the DIB bits
+    unsigned char* pixelData = bmpData.data() + bmfh.bfOffBits;
+    if (!GetDIBits(hDC, hBitmap, 0, abs(bi.biHeight), pixelData, (BITMAPINFO*)&bi, DIB_RGB_COLORS)) {
         SelectObject(hDC, hOldBitmap);
         DeleteDC(hDC);
-        std::cerr << "Failed to create DIB section" << std::endl;
+        std::cerr << "Failed to get DIB bits" << std::endl;
         return std::nullopt;
     }
     
-    HDC hMemDC = CreateCompatibleDC(hDC);
-    SelectObject(hMemDC, hDIBSection);
-    
-    // Copy the bitmap data
-    BitBlt(hMemDC, 0, 0, bm.bmWidth, bm.bmHeight, hDC, 0, 0, SRCCOPY);
-    
-    // Convert BGRA to RGBA for proper PNG encoding
-    int size = bm.bmWidth * bm.bmHeight * 4;
-    std::vector<unsigned char> pixelData(size);
-    
-    for (int i = 0; i < size; i += 4) {
-        // BGRA to RGBA conversion
-        pixelData[i] = bits[i + 2];     // Red
-        pixelData[i + 1] = bits[i + 1]; // Green
-        pixelData[i + 2] = bits[i];     // Blue
-        pixelData[i + 3] = bits[i + 3]; // Alpha
-    }
-    
-    // For simplicity, we'll store as a data URI with base64 encoded PNG
-    // In a real application, you might want to use a proper PNG encoding library
-    // For now, we'll just encode the raw pixel data as base64
-    std::string encodedData = base64Encode(pixelData);
+    // Encode the entire BMP file to base64
+    std::string encodedData = base64Encode(bmpData.data(), bmpData.size());
     
     // Cleanup
-    SelectObject(hMemDC, NULL);
-    DeleteDC(hMemDC);
     SelectObject(hDC, hOldBitmap);
     DeleteDC(hDC);
-    DeleteObject(hDIBSection);
     
     ApplicationLauncher::IconData iconData;
     iconData.base64Data = encodedData;
-    iconData.mimeType = "image/png";
+    iconData.mimeType = "image/bmp";
     
     return iconData;
 }
@@ -135,8 +133,13 @@ std::optional<ApplicationLauncher::IconData> ApplicationLauncher::extractIconFro
     HICON hIcon = NULL;
     UINT extractResult;
     
-    // Try to extract the icon from the file
-    extractResult = ExtractIconExA(path.c_str(), 0, &hIcon, NULL, 1);
+    // Try to extract the icon from the file - use smaller icon for better display in list
+    extractResult = ExtractIconExA(path.c_str(), 0, NULL, &hIcon, 1);
+    
+    // If small icon failed, try to get large icon
+    if (extractResult == 0 || !hIcon) {
+        extractResult = ExtractIconExA(path.c_str(), 0, &hIcon, NULL, 1);
+    }
     
     if (extractResult == 0 || !hIcon) {
         // Fallback to default icon
@@ -155,9 +158,9 @@ std::optional<ApplicationLauncher::IconData> ApplicationLauncher::extractIconFro
         return std::nullopt;
     }
     
-    // Get icon dimensions
-    int iconWidth = GetSystemMetrics(SM_CXICON);
-    int iconHeight = GetSystemMetrics(SM_CYICON);
+    // Get icon dimensions - use smaller icon for list views
+    int iconWidth = GetSystemMetrics(SM_CXSMICON);
+    int iconHeight = GetSystemMetrics(SM_CYSMICON);
     
     // Create a compatible DC
     HDC hMemDC = CreateCompatibleDC(hDC);
