@@ -21,8 +21,9 @@
 #define SEE_MASK_NOCLOSE 0x00000040
 #endif
 
-// Initialize static member
+// Initialize static members
 std::vector<ApplicationLauncher::Application> ApplicationLauncher::_registeredApplications;
+std::map<std::string, HANDLE> ApplicationLauncher::_applicationProcesses;
 
 // Base64 encoding helper function - make it static to limit its scope to this file
 static std::string base64Encode(const unsigned char* data, size_t length) {
@@ -212,16 +213,262 @@ bool ApplicationLauncher::launchApplication(const std::string& appId) {
         return false;
     }
 
+    // Close any existing instance of this app
+    auto it = _applicationProcesses.find(appId);
+    if (it != _applicationProcesses.end()) {
+        // There's already a process handle for this app
+        if (it->second != NULL) {
+            // Check if process is still running
+            DWORD exitCode = 0;
+            if (GetExitCodeProcess(it->second, &exitCode) && exitCode == STILL_ACTIVE) {
+                std::cout << "Application " << appId << " is already running. Closing existing instance..." << std::endl;
+                // Terminate the existing process
+                TerminateProcess(it->second, 0);
+                CloseHandle(it->second);
+            } else {
+                // Process has already exited, just close the handle
+                CloseHandle(it->second);
+            }
+        }
+        // Remove the old handle
+        _applicationProcesses.erase(it);
+    }
+
+    bool result = false;
+    HANDLE processHandle = NULL;
+
     switch (app->type) {
         case ApplicationType::EXECUTABLE:
-            return launchExecutable(*app);
+            result = launchExecutable(*app);
+            // Get the process handle
+            if (result && _applicationProcesses.find(appId) != _applicationProcesses.end()) {
+                processHandle = _applicationProcesses[appId];
+            }
+            break;
         case ApplicationType::WEBSITE:
-            return launchWebsite(*app);
+            result = launchWebsite(*app);
+            break;
         case ApplicationType::SYSTEM_COMMAND:
-            return launchSystemCommand(*app);
+            result = launchSystemCommand(*app);
+            break;
         default:
             std::cerr << "Unsupported application type" << std::endl;
             return false;
+    }
+
+    return result;
+}
+
+// Close application by ID
+bool ApplicationLauncher::closeApplication(const std::string& appId) {
+    try {
+        // Find the application info
+        auto app = findApplicationById(appId);
+        if (!app) {
+            std::cerr << "Application not registered: " << appId << std::endl;
+            return false;
+        }
+
+        // Check if we have a handle in our process map
+        auto it = _applicationProcesses.find(appId);
+        HANDLE processHandle = NULL;
+        bool ownedHandle = false;
+        
+        if (it != _applicationProcesses.end() && it->second != NULL) {
+            processHandle = it->second;
+            ownedHandle = true;
+            
+            // Check if the process is still running
+            DWORD exitCode = 0;
+            if (!GetExitCodeProcess(processHandle, &exitCode) || exitCode != STILL_ACTIVE) {
+                // Process has already exited, clean up and look for new instances
+                CloseHandle(processHandle);
+                _applicationProcesses.erase(it);
+                processHandle = NULL;
+                ownedHandle = false;
+            }
+        }
+        
+        // If we don't have a valid process handle, try to find the process by name
+        if (processHandle == NULL) {
+            // Find all windows with matching title or process name
+            std::vector<HWND> matchingWindows;
+            std::string execName = app->path.substr(app->path.find_last_of("\\/") + 1);
+            
+            // Remove extension if present
+            size_t dotPos = execName.find_last_of(".");
+            if (dotPos != std::string::npos) {
+                execName = execName.substr(0, dotPos);
+            }
+            
+            // Convert app name to lowercase for case-insensitive comparison
+            std::string lowerAppName = app->name;
+            std::transform(lowerAppName.begin(), lowerAppName.end(), lowerAppName.begin(), ::tolower);
+            std::string lowerExecName = execName;
+            std::transform(lowerExecName.begin(), lowerExecName.end(), lowerExecName.begin(), ::tolower);
+            
+            // Find all windows that might match our application
+            EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+                std::vector<HWND>* windows = reinterpret_cast<std::vector<HWND>*>(lParam);
+                if (IsWindowVisible(hwnd) || IsIconic(hwnd)) {  // Include minimized windows
+                    windows->push_back(hwnd);
+                }
+                return TRUE; // Continue enumeration
+            }, reinterpret_cast<LPARAM>(&matchingWindows));
+            
+            // Find window that matches our application name or executable name
+            for (HWND hwnd : matchingWindows) {
+                // Get window title
+                char title[256] = {0};
+                GetWindowTextA(hwnd, title, sizeof(title));
+                std::string windowTitle = title;
+                std::transform(windowTitle.begin(), windowTitle.end(), windowTitle.begin(), ::tolower);
+                
+                // Get process name
+                DWORD pid = 0;
+                GetWindowThreadProcessId(hwnd, &pid);
+                HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                char procName[MAX_PATH] = {0};
+                
+                if (h) {
+                    DWORD size = sizeof(procName);
+                    if (QueryFullProcessImageNameA(h, 0, procName, &size)) {
+                        std::string processPath = procName;
+                        std::string processName = processPath.substr(processPath.find_last_of("\\/") + 1);
+                        
+                        // Remove extension if present
+                        size_t dotPos = processName.find_last_of(".");
+                        if (dotPos != std::string::npos) {
+                            processName = processName.substr(0, dotPos);
+                        }
+                        
+                        std::transform(processName.begin(), processName.end(), processName.begin(), ::tolower);
+                        
+                        // If the window title or process name matches our application
+                        if (windowTitle.find(lowerAppName) != std::string::npos || 
+                            windowTitle.find(lowerExecName) != std::string::npos ||
+                            processName.find(lowerExecName) != std::string::npos) {
+                            
+                            // Get the process handle with PROCESS_TERMINATE rights to actually be able to close it
+                            processHandle = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+                            if (processHandle) {
+                                // Store handle in our map for future use
+                                _applicationProcesses[appId] = processHandle;
+                                ownedHandle = true;
+                                break;
+                            }
+                        }
+                    }
+                    CloseHandle(h);
+                }
+            }
+        }
+        
+        // If we still don't have a valid process handle, try one more approach: by executable path
+        if (processHandle == NULL && app->type == ApplicationType::EXECUTABLE) {
+            // Create a snapshot of all processes
+            HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (hSnapshot != INVALID_HANDLE_VALUE) {
+                PROCESSENTRY32 pe32;
+                pe32.dwSize = sizeof(PROCESSENTRY32);
+                
+                // Get the process name from the app path
+                std::string execName = app->path.substr(app->path.find_last_of("\\/") + 1);
+                std::transform(execName.begin(), execName.end(), execName.begin(), ::tolower);
+                
+                if (Process32First(hSnapshot, &pe32)) {
+                    do {
+                        std::string procName = pe32.szExeFile;
+                        std::transform(procName.begin(), procName.end(), procName.begin(), ::tolower);
+                        
+                        if (procName == execName) {
+                            // Found a process with matching executable name
+                            processHandle = OpenProcess(PROCESS_TERMINATE, FALSE, pe32.th32ProcessID);
+                            if (processHandle) {
+                                _applicationProcesses[appId] = processHandle;
+                                ownedHandle = true;
+                                break;
+                            }
+                        }
+                    } while (Process32Next(hSnapshot, &pe32));
+                }
+                CloseHandle(hSnapshot);
+            }
+        }
+        
+        // If we still don't have a handle, we can't find the process
+        if (processHandle == NULL) {
+            std::cerr << "Could not find running instance of application: " << appId << std::endl;
+            return false;
+        }
+        
+        // Try to close the application gracefully first
+        bool closed = false;
+        
+        // Find all windows belonging to the process
+        DWORD processId = GetProcessId(processHandle);
+        std::vector<HWND> processWindows;
+        
+        // Create a stable pair that we can safely take the address of
+        std::pair<DWORD, std::vector<HWND>*> enumData(processId, &processWindows);
+        
+        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+            auto params = reinterpret_cast<std::pair<DWORD, std::vector<HWND>*>*>(lParam);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            
+            if (pid == params->first) {
+                params->second->push_back(hwnd);
+            }
+            return TRUE; // Continue enumeration
+        }, reinterpret_cast<LPARAM>(&enumData));
+        
+        // Try to close each window with WM_CLOSE
+        for (HWND hwnd : processWindows) {
+            if (IsWindow(hwnd)) {
+                // Post the message instead of sending it to avoid deadlocks
+                PostMessage(hwnd, WM_CLOSE, 0, 0);
+            }
+        }
+        
+        // Wait for process to exit
+        if (WaitForSingleObject(processHandle, 2000) == WAIT_OBJECT_0) {
+            closed = true;
+        }
+        
+        // If graceful close failed, force terminate
+        if (!closed) {
+            if (!TerminateProcess(processHandle, 0)) {
+                DWORD error = GetLastError();
+                std::cerr << "Failed to terminate process for application: " << appId;
+                std::cerr << " (Error: " << error << ")" << std::endl;
+                if (ownedHandle) {
+                    CloseHandle(processHandle);
+                    _applicationProcesses.erase(appId);
+                }
+                return false;
+            }
+            
+            // Wait to ensure the process is really terminated
+            WaitForSingleObject(processHandle, 1000);
+        }
+        
+        // Clean up the handle if we own it
+        if (ownedHandle) {
+            CloseHandle(processHandle);
+            _applicationProcesses.erase(appId);
+        }
+        
+        std::cout << "Successfully closed application: " << appId << std::endl;
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in closeApplication: " << e.what() << std::endl;
+        return false;
+    }
+    catch (...) {
+        std::cerr << "Unknown exception in closeApplication" << std::endl;
+        return false;
     }
 }
 
@@ -251,6 +498,11 @@ bool ApplicationLauncher::launchApplication(
         std::cerr << "Failed to launch application. Error code: " << error 
                   << ", Path: " << path << std::endl;
         return false;
+    }
+
+    // Custom launches don't have an ID to track them by
+    if (sei.hProcess) {
+        CloseHandle(sei.hProcess); // We can't track this process, so close the handle
     }
 
     return true;
@@ -322,6 +574,11 @@ bool ApplicationLauncher::launchExecutable(const Application& app) {
         return false;
     }
 
+    // Store the process handle
+    if (sei.hProcess) {
+        _applicationProcesses[app.id] = sei.hProcess;
+    }
+
     return true;
 }
 
@@ -335,6 +592,8 @@ bool ApplicationLauncher::launchWebsite(const Application& app) {
         return false;
     }
 
+    // Note: We can't reliably track browser processes, so we don't store any process handle
+
     return true;
 }
 
@@ -346,6 +605,8 @@ bool ApplicationLauncher::launchSystemCommand(const Application& app) {
         std::cerr << "Failed to execute system command. Return code: " << result << std::endl;
         return false;
     }
+
+    // Note: We can't reliably track system command processes, so we don't store any process handle
 
     return true;
 }

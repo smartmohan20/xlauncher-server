@@ -6,8 +6,11 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <map>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <Windows.h>
+#include <TlHelp32.h>  // For process enumeration
 
 class ApplicationLauncher {
 public:
@@ -40,6 +43,9 @@ public:
         const std::vector<std::string>& arguments
     );
 
+    // New method to close an application by its ID
+    static bool closeApplication(const std::string& appId);
+
     // Register a new application
     static bool registerApplication(const Application& app);
 
@@ -60,4 +66,7 @@ private:
 
     // Store registered applications
     static std::vector<Application> _registeredApplications;
+    
+    // Store process handles for active applications (appId -> HANDLE)
+    static std::map<std::string, HANDLE> _applicationProcesses;
 };

@@ -48,32 +48,101 @@ int main(int argc, char** argv) {
             nlohmann::json response;
             
             try {
-                std::string type = message.value("type", "");
+                // First validate that we have a proper JSON message
+                if (!message.is_object()) {
+                    response["type"] = "error";
+                    response["message"] = "Invalid message format: expected JSON object";
+                    return response;
+                }
+                
+                // Extract message type with validation
+                std::string type;
+                try {
+                    if (!message.contains("type")) {
+                        response["type"] = "error";
+                        response["message"] = "Missing required field: type";
+                        return response;
+                    }
+                    
+                    if (!message["type"].is_string()) {
+                        response["type"] = "error";
+                        response["message"] = "Invalid type field: expected string";
+                        return response;
+                    }
+                    
+                    type = message["type"];
+                } catch (...) {
+                    response["type"] = "error";
+                    response["message"] = "Error processing message type";
+                    return response;
+                }
+                
+                // Validate data field exists for commands that need it
+                if ((type == "launch_app" || type == "close_app") && 
+                    (!message.contains("data") || !message["data"].is_object())) {
+                    response["type"] = "error";
+                    response["message"] = "Missing or invalid data field";
+                    return response;
+                }
                 
                 if (type == "launch_app") {
                     bool launched = false;
                     
                     // Check if a custom path is provided
-                    if (message["data"].contains("path")) {
+                    if (message["data"].contains("path") && message["data"]["path"].is_string()) {
                         std::string path = message["data"]["path"];
                         
                         // Get arguments if provided, otherwise use empty vector
                         std::vector<std::string> arguments;
-                        if (message["data"].contains("arguments")) {
-                            arguments = message["data"]["arguments"].get<std::vector<std::string>>();
+                        if (message["data"].contains("arguments") && message["data"]["arguments"].is_array()) {
+                            try {
+                                arguments = message["data"]["arguments"].get<std::vector<std::string>>();
+                            } catch (...) {
+                                // If conversion fails, use empty vector
+                                arguments.clear();
+                            }
                         }
                         
                         // Launch with custom path and arguments
-                        launched = ApplicationLauncher::launchApplication(path, arguments);
+                        try {
+                            launched = ApplicationLauncher::launchApplication(path, arguments);
+                        } catch (const std::exception& e) {
+                            response["type"] = "launch_result";
+                            response["success"] = false;
+                            response["path"] = path;
+                            response["error"] = e.what();
+                            return response;
+                        } catch (...) {
+                            response["type"] = "launch_result";
+                            response["success"] = false;
+                            response["path"] = path;
+                            response["error"] = "Unknown error during launch";
+                            return response;
+                        }
                         
                         response["type"] = "launch_result";
                         response["success"] = launched;
                         response["path"] = path;
                     } 
                     // Existing ID-based launch remains the same
-                    else if (message["data"].contains("id")) {
+                    else if (message["data"].contains("id") && message["data"]["id"].is_string()) {
                         std::string appId = message["data"]["id"];
-                        launched = ApplicationLauncher::launchApplication(appId);
+                        
+                        try {
+                            launched = ApplicationLauncher::launchApplication(appId);
+                        } catch (const std::exception& e) {
+                            response["type"] = "launch_result";
+                            response["success"] = false;
+                            response["app_id"] = appId;
+                            response["error"] = e.what();
+                            return response;
+                        } catch (...) {
+                            response["type"] = "launch_result";
+                            response["success"] = false;
+                            response["app_id"] = appId;
+                            response["error"] = "Unknown error during launch";
+                            return response;
+                        }
                         
                         response["type"] = "launch_result";
                         response["success"] = launched;
@@ -84,37 +153,91 @@ int main(int argc, char** argv) {
                         response["message"] = "No path or ID provided";
                     }
                 }
+                else if (type == "close_app") {
+                    // Handle close app request
+                    if (message["data"].contains("id") && message["data"]["id"].is_string()) {
+                        std::string appId = message["data"]["id"];
+                        
+                        bool closed = false;
+                        try {
+                            closed = ApplicationLauncher::closeApplication(appId);
+                        } catch (const std::exception& e) {
+                            response["type"] = "close_result";
+                            response["success"] = false;
+                            response["app_id"] = appId;
+                            response["error"] = e.what();
+                            return response;
+                        } catch (...) {
+                            response["type"] = "close_result";
+                            response["success"] = false;
+                            response["app_id"] = appId;
+                            response["error"] = "Unknown error during close operation";
+                            return response;
+                        }
+                        
+                        response["type"] = "close_result";
+                        response["success"] = closed;
+                        response["app_id"] = appId;
+                    }
+                    else {
+                        response["type"] = "error";
+                        response["message"] = "No app ID provided";
+                    }
+                }
                 else if (type == "list_apps") {
-                    auto apps = ApplicationLauncher::getRegisteredApplications();
+                    std::vector<ApplicationLauncher::Application> apps;
+                    
+                    try {
+                        apps = ApplicationLauncher::getRegisteredApplications();
+                    } catch (const std::exception& e) {
+                        response["type"] = "error";
+                        response["message"] = std::string("Error retrieving application list: ") + e.what();
+                        return response;
+                    } catch (...) {
+                        response["type"] = "error";
+                        response["message"] = "Unknown error retrieving application list";
+                        return response;
+                    }
                     
                     response["type"] = "app_list";
                     response["apps"] = nlohmann::json::array();
                     
                     for (const auto& app : apps) {
-                        nlohmann::json appJson = {
-                            {"id", app.id},
-                            {"name", app.name},
-                            {"path", app.path}
-                        };
-                        
-                        // Add icon data if available
-                        if (app.icon.has_value()) {
-                            appJson["icon"] = {
-                                {"data", app.icon->base64Data},
-                                {"mimeType", app.icon->mimeType}
+                        try {
+                            nlohmann::json appJson = {
+                                {"id", app.id},
+                                {"name", app.name},
+                                {"path", app.path}
                             };
+                            
+                            // Add icon data if available
+                            if (app.icon.has_value()) {
+                                appJson["icon"] = {
+                                    {"data", app.icon->base64Data},
+                                    {"mimeType", app.icon->mimeType}
+                                };
+                            }
+                            
+                            response["apps"].push_back(appJson);
+                        } catch (...) {
+                            // Skip this app if there's an error, but continue with others
+                            continue;
                         }
-                        
-                        response["apps"].push_back(appJson);
                     }
                 }
                 else {
                     response["type"] = "error";
-                    response["message"] = "Unknown message type";
+                    response["message"] = "Unknown message type: " + type;
                 }
+            } catch (const nlohmann::json::exception& e) {
+                response["type"] = "error";
+                response["message"] = std::string("JSON parsing error: ") + e.what();
             } catch (const std::exception& e) {
                 response["type"] = "error";
-                response["message"] = e.what();
+                response["message"] = std::string("Error processing message: ") + e.what();
+            } catch (...) {
+                response["type"] = "error";
+                response["message"] = "Unknown error occurred while processing message";
             }
             
             return response;
