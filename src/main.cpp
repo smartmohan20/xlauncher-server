@@ -11,10 +11,13 @@ int main(int argc, char** argv) {
         dotenv::init();
         
         // Get PORT from environment or use default (2354)
-        int port = 2354;  // Default port
+        int port = 2354;                  // Default port
+        std::string host = "127.0.0.1";   // Default host
         
-        // Try to get PORT from environment
+        // Try to get PORT and HOST from environment
         auto port_it = dotenv::env.find("PORT");
+        auto host_it = dotenv::env.find("HOST");
+
         if (port_it != dotenv::env.end()) {
             try {
                 port = std::stoi(port_it->second);
@@ -22,9 +25,15 @@ int main(int argc, char** argv) {
                 std::cerr << "Warning: Invalid PORT value in .env file, using default: " << port << std::endl;
             }
         }
+       
+        if (host_it != dotenv::env.end()) {
+            host = host_it->second;
+        } else {
+            std::cout << "Warning: Invalid HOST value in .env file,, using default: " << host << std::endl;
+        }
         
         // Create a server instance with the port from environment
-        Server server(port);
+        Server server(port, host);
 
         // Register some sample applications
         ApplicationLauncher::registerApplication({

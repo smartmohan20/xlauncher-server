@@ -1,7 +1,7 @@
 #include "server.h"
 #include <iostream>
 
-Server::Server(int port) : _socketServer(port) {
+Server::Server(int port, const std::string& host) : _socketServer(port, host) {
     initialize();
 }
 

@@ -19,7 +19,7 @@ public:
     using MessageHandler = std::function<std::string(const std::string&)>;
     
     // Constructor
-    explicit SimpleSocketServer(int port);
+    explicit SimpleSocketServer(int port, const std::string& host = "127.0.0.1");
     
     // Destructor
     ~SimpleSocketServer();
@@ -51,6 +51,7 @@ private:
     
     // Server state
     int _port;
+    std::string _host;
     SOCKET _listenSocket;
     std::atomic<bool> _running;
     std::thread _serverThread;

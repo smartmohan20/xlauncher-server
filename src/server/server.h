@@ -7,7 +7,7 @@
 
 class Server {
 public:
-    explicit Server(int port);
+    explicit Server(int port, const std::string& host = "127.0.0.1");
     ~Server();
     
     std::pair<bool, std::string> run();

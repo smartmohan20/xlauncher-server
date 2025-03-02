@@ -53,7 +53,8 @@ std::string base64Encode(const unsigned char* data, size_t length) {
 }
 
 // Constructor
-SimpleSocketServer::SimpleSocketServer(int port) : _port(port), _running(false), _listenSocket(INVALID_SOCKET) {
+SimpleSocketServer::SimpleSocketServer(int port, const std::string& host) 
+    : _port(port), _host(host), _running(false), _listenSocket(INVALID_SOCKET) {
     // Initialize Winsock
     WSADATA wsaData;
     int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -61,9 +62,6 @@ SimpleSocketServer::SimpleSocketServer(int port) : _port(port), _running(false),
         std::cerr << "WSAStartup failed: " << result << std::endl;
         throw std::runtime_error("WSAStartup failed");
     }
-    
-    // Load environment variables
-    dotenv::init();
 }
 
 // Destructor
@@ -85,13 +83,7 @@ std::pair<bool, std::string> SimpleSocketServer::start() {
     }
     
     // Get host from environment variables
-    std::string host = "127.0.0.1"; // Default value
-    if (dotenv::env.find("HOST") != dotenv::env.end()) {
-        host = dotenv::env["HOST"];
-        std::cout << "Using HOST from environment: " << host << std::endl;
-    } else {
-        std::cout << "HOST environment variable not set, using default: " << host << std::endl;
-    }
+    std::string host = _host;
     
     // Set up the sockaddr structure
     sockaddr_in service;
