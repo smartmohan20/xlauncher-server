@@ -1,5 +1,6 @@
 #include "server/server.h"
 #include "application/app_launcher.h"
+#include "screen_sharing.h"
 #include "dotenv.h"
 #include <iostream>
 #include <thread>
@@ -29,7 +30,7 @@ int main(int argc, char** argv) {
         if (host_it != dotenv::env.end()) {
             host = host_it->second;
         } else {
-            std::cout << "Warning: Invalid HOST value in .env file,, using default: " << host << std::endl;
+            std::cout << "Warning: Invalid HOST value in .env file, using default: " << host << std::endl;
         }
         
         // Create a server instance with the port from environment
@@ -53,7 +54,7 @@ int main(int argc, char** argv) {
         });
 
         // Configure message handler to support application launching
-        server.setMessageHandler([](const nlohmann::json& message) {
+        server.setMessageHandler([host, port](const nlohmann::json& message) {
             nlohmann::json response;
             
             try {
@@ -506,6 +507,15 @@ int main(int argc, char** argv) {
                     if (!loaded) {
                         response["error"] = "File saved but failed to load applications";
                     }
+                }
+                // New message handler for remote control web app
+                else if (type == "screen_remote_details") {
+                    // Return connection details for the remote control web app
+                    response["type"] = "screen_remote_details";
+                    response["success"] = true;
+                    response["host"] = host;
+                    response["port"] = port;
+                    response["webSocketUrl"] = "ws://" + host + ":" + std::to_string(port);
                 }
                 else {
                     response["type"] = "error";

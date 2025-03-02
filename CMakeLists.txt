@@ -18,6 +18,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 
+# Try to find TurboJPEG but make it optional
+find_package(TurboJPEG QUIET)
+
+if(TURBOJPEG_FOUND)
+    add_definitions(-DHAVE_TURBOJPEG)
+    include_directories(${TURBOJPEG_INCLUDE_DIRS})
+    set(TURBOJPEG_LIBS ${TURBOJPEG_LIBRARIES})
+    message(STATUS "TurboJPEG found, enabling high-performance screen sharing")
+else()
+    set(TURBOJPEG_LIBS "")
+    add_definitions(-DNO_TURBOJPEG)
+    message(STATUS "TurboJPEG not found, screen sharing will use GDI+ fallback method")
+endif()
+
 # Add IXWebSocket library
 add_subdirectory(lib/ixwebsocket)
 
@@ -35,6 +49,10 @@ add_executable(xlauncher-server
     src/server/server.cpp
     src/server/websocket_server.cpp
     src/application/app_launcher.cpp
+    src/screen_capture/screen_capture.cpp
+    src/input/input_handler.cpp
+    src/screen_sharing.cpp
+    src/utils/base64.cpp
 )
 
 # Link libraries
@@ -47,7 +65,9 @@ target_link_libraries(xlauncher-server
     PRIVATE crypt32
     PRIVATE Comctl32     # For icon extraction functions
     PRIVATE Gdi32        # For GDI functions
+    PRIVATE gdiplus      # For GDI+ (fallback for JPEG compression)
     ${ZLIB_LIBRARIES}
+    ${TURBOJPEG_LIBS}
 )
 
 # Copy .env file to build directory
