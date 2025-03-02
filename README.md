@@ -3,7 +3,7 @@
 🚀 XLauncher: Effortlessly launch and control applications across devices with a seamless web-based interface, real-time synchronization, and smart remote execution. ⚙️💻📱
 
 ## Description 📋
-**XLauncher Server** is a powerful cross-platform application launcher and remote control system that enables seamless application management and remote device interaction across multiple platforms.
+**XLauncher** is a powerful cross-platform application launcher and remote control system that enables seamless application management and remote device interaction across multiple platforms.
 
 ## Features ✨
 
