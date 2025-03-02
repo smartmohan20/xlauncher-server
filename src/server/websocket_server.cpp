@@ -1,5 +1,5 @@
 #include "websocket_server.h"
-#include "dotenv.h"
+#include "utils/base64.h"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
@@ -9,8 +9,8 @@
 #include <wincrypt.h>
 #include <openssl/sha.h>
 
-// Base64 encoding function
-std::string base64Encode(const unsigned char* data, size_t length) {
+// Base64 encoding function for WebSocket handshake
+static std::string ws_base64Encode(const unsigned char* data, size_t length) {
     static const char base64Chars[] = 
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     
@@ -73,6 +73,11 @@ SimpleSocketServer::~SimpleSocketServer() {
     WSACleanup();
 }
 
+// Helper to disambiguate from winsock send function
+int SimpleSocketServer::rawSend(SOCKET client, const char* data, int length, int flags) {
+    return ::send(client, data, length, flags);
+}
+
 std::pair<bool, std::string> SimpleSocketServer::start() {
     if (_running) return {true, "Server is already running"};
     
@@ -82,13 +87,10 @@ std::pair<bool, std::string> SimpleSocketServer::start() {
         return {false, "Socket creation failed: " + std::to_string(WSAGetLastError())};
     }
     
-    // Get host from environment variables
-    std::string host = _host;
-    
     // Set up the sockaddr structure
     sockaddr_in service;
     service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr(host.c_str());
+    service.sin_addr.s_addr = inet_addr(_host.c_str());
     service.sin_port = htons(_port);
     
     // Bind the socket
@@ -103,7 +105,7 @@ std::pair<bool, std::string> SimpleSocketServer::start() {
         return {false, "Listen failed with error: " + std::to_string(WSAGetLastError())};
     }
     
-    std::cout << "Server listening on " << host << ":" << _port << std::endl;
+    std::cout << "Server listening on " << _host << ":" << _port << std::endl;
     
     _running = true;
     _serverThread = std::thread(&SimpleSocketServer::runServer, this);
@@ -117,10 +119,13 @@ void SimpleSocketServer::stop() {
     _running = false;
     
     // Close all client sockets
-    for (const auto& client : _clients) {
-        closesocket(client.first);
+    {
+        std::lock_guard<std::mutex> lock(_clientsMutex);
+        for (const auto& client : _clients) {
+            closesocket(client.first);
+        }
+        _clients.clear();
     }
-    _clients.clear();
     
     // Join the server thread
     if (_serverThread.joinable()) {
@@ -143,9 +148,17 @@ void SimpleSocketServer::runServer() {
         FD_ZERO(&readfds);
         FD_SET(_listenSocket, &readfds);
         
+        // Add client sockets to the set
+        {
+            std::lock_guard<std::mutex> lock(_clientsMutex);
+            for (const auto& client : _clients) {
+                FD_SET(client.first, &readfds);
+            }
+        }
+        
         // Set timeout
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000; // 100ms timeout
         
         // Wait for activity on socket
         int activity = select(0, &readfds, NULL, NULL, &tv);
@@ -168,37 +181,41 @@ void SimpleSocketServer::runServer() {
             
             // Handle WebSocket handshake
             if (handleWebSocketHandshake(clientSocket)) {
+                std::lock_guard<std::mutex> lock(_clientsMutex);
                 _clients[clientSocket] = true;
-                
-                // Start receiving messages
-                char buffer[4096];
-                int bytesReceived;
-                
-                while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-                    std::vector<uint8_t> frameData(buffer, buffer + bytesReceived);
-                    std::string decodedMessage = decodeWebSocketFrame(frameData);
-                    
-                    if (!decodedMessage.empty() && _messageHandler) {
-                        // Process message and get response
-                        std::string response = _messageHandler(decodedMessage);
-                        
-                        if (!response.empty()) {
-                            // Encode and send response
-                            std::vector<uint8_t> responseFrame = encodeWebSocketFrame(response);
-                            send(clientSocket, 
-                                 reinterpret_cast<const char*>(responseFrame.data()), 
-                                 responseFrame.size(), 
-                                 0);
-                        }
-                    }
-                }
-                
-                // Client disconnected
-                closesocket(clientSocket);
-                _clients.erase(clientSocket);
             } else {
                 closesocket(clientSocket);
             }
+        }
+        
+        // Check for activity on client sockets
+        std::vector<SOCKET> clientsToRead;
+        {
+            std::lock_guard<std::mutex> lock(_clientsMutex);
+            for (const auto& client : _clients) {
+                if (FD_ISSET(client.first, &readfds)) {
+                    clientsToRead.push_back(client.first);
+                }
+            }
+        }
+        
+        // Process client messages outside of the lock
+        for (SOCKET clientSocket : clientsToRead) {
+            char buffer[8192]; // Increased buffer size for binary data
+            int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+            
+            if (bytesReceived <= 0) {
+                // Client disconnected
+                std::lock_guard<std::mutex> lock(_clientsMutex);
+                closesocket(clientSocket);
+                _clients.erase(clientSocket);
+                std::cout << "Client disconnected" << std::endl;
+                continue;
+            }
+            
+            // Process WebSocket frame
+            std::vector<uint8_t> frameData(buffer, buffer + bytesReceived);
+            processWebSocketFrame(clientSocket, frameData);
         }
     }
 }
@@ -215,7 +232,7 @@ std::string SimpleSocketServer::computeAcceptKey(const std::string& key) {
     SHA1(reinterpret_cast<const unsigned char*>(concatenated.c_str()), concatenated.length(), sha1Hash);
     
     // Base64 encode the hash
-    return base64Encode(sha1Hash, SHA_DIGEST_LENGTH);
+    return ws_base64Encode(sha1Hash, SHA_DIGEST_LENGTH);
 }
 
 std::string SimpleSocketServer::generateHandshakeResponse(const std::string& key) {
@@ -256,7 +273,7 @@ bool SimpleSocketServer::handleWebSocketHandshake(SOCKET clientSocket) {
         std::string response = generateHandshakeResponse(key);
         
         // Send handshake response
-        if (send(clientSocket, response.c_str(), response.length(), 0) == SOCKET_ERROR) {
+        if (rawSend(clientSocket, response.c_str(), response.length(), 0) == SOCKET_ERROR) {
             std::cerr << "Failed to send handshake response: " << WSAGetLastError() << std::endl;
             return false;
         }
@@ -268,54 +285,120 @@ bool SimpleSocketServer::handleWebSocketHandshake(SOCKET clientSocket) {
     return false;
 }
 
-std::string SimpleSocketServer::decodeWebSocketFrame(const std::vector<uint8_t>& frame) {
-    if (frame.empty()) return "";
+void SimpleSocketServer::processWebSocketFrame(SOCKET clientSocket, const std::vector<uint8_t>& frame) {
+    if (frame.empty()) return;
 
-    // Basic WebSocket frame decoding
+    // Parse WebSocket frame header
     bool fin = (frame[0] & 0x80) != 0;
     int opcode = frame[0] & 0x0F;
     bool masked = (frame[1] & 0x80) != 0;
     
-    // Handle different payload lengths
-    uint64_t payload_length = frame[1] & 0x7F;
-    size_t offset = 2;
+    // Get payload length
+    uint64_t payloadLength = frame[1] & 0x7F;
+    size_t headerOffset = 2;
     
-    // Extended payload length
-    if (payload_length == 126) {
-        payload_length = (frame[2] << 8) | frame[3];
-        offset = 4;
-    } else if (payload_length == 127) {
-        payload_length = 0;
+    // Handle extended payload length
+    if (payloadLength == 126) {
+        if (frame.size() < 4) return; // Not enough data
+        
+        payloadLength = (static_cast<uint16_t>(frame[2]) << 8) | frame[3];
+        headerOffset = 4;
+    } else if (payloadLength == 127) {
+        if (frame.size() < 10) return; // Not enough data
+        
+        payloadLength = 0;
         for (int i = 0; i < 8; ++i) {
-            payload_length = (payload_length << 8) | frame[2 + i];
+            payloadLength = (payloadLength << 8) | frame[2 + i];
         }
-        offset = 10;
+        headerOffset = 10;
     }
     
-    // Masking key
+    // Get masking key
     std::vector<uint8_t> maskingKey;
     if (masked) {
-        maskingKey.insert(maskingKey.end(), 
-                          frame.begin() + offset, 
-                          frame.begin() + offset + 4);
-        offset += 4;
+        if (frame.size() < headerOffset + 4) return; // Not enough data
+        
+        maskingKey.assign(frame.begin() + headerOffset, frame.begin() + headerOffset + 4);
+        headerOffset += 4;
     }
     
-    // Extract payload
-    std::vector<uint8_t> payload(
-        frame.begin() + offset, 
-        frame.begin() + offset + payload_length
-    );
+    // Check if we have enough data
+    if (frame.size() < headerOffset + payloadLength) return;
     
-    // Unmask payload if necessary
-    if (masked && !maskingKey.empty()) {
-        for (size_t i = 0; i < payload.size(); ++i) {
-            payload[i] ^= maskingKey[i % 4];
+    // Extract payload data
+    std::vector<uint8_t> payloadData(frame.begin() + headerOffset, frame.begin() + headerOffset + payloadLength);
+    
+    // Unmask the data if needed
+    if (masked) {
+        for (size_t i = 0; i < payloadData.size(); ++i) {
+            payloadData[i] ^= maskingKey[i % 4];
         }
     }
     
-    // Convert payload to string
-    return std::string(payload.begin(), payload.end());
+    // Handle different opcodes
+    switch (opcode) {
+        case 0x1: // Text frame
+            if (_messageHandler) {
+                std::string textMessage(payloadData.begin(), payloadData.end());
+                std::string response = _messageHandler(textMessage);
+                
+                if (!response.empty()) {
+                    sendMessage(clientSocket, response);
+                }
+            }
+            break;
+            
+        case 0x2: // Binary frame
+            if (_binaryMessageHandler) {
+                _binaryMessageHandler(clientSocket, payloadData);
+            }
+            break;
+            
+        case 0x8: // Close frame
+            {
+                std::lock_guard<std::mutex> lock(_clientsMutex);
+                closesocket(clientSocket);
+                _clients.erase(clientSocket);
+                std::cout << "Client closed connection" << std::endl;
+            }
+            break;
+            
+        case 0x9: // Ping frame
+            // Send pong frame
+            {
+                std::vector<uint8_t> pongFrame;
+                pongFrame.push_back(0x8A); // FIN bit set, Pong frame
+                
+                // Payload length
+                if (payloadData.size() <= 125) {
+                    pongFrame.push_back(static_cast<uint8_t>(payloadData.size()));
+                } else if (payloadData.size() <= 65535) {
+                    pongFrame.push_back(126);
+                    pongFrame.push_back((payloadData.size() >> 8) & 0xFF);
+                    pongFrame.push_back(payloadData.size() & 0xFF);
+                } else {
+                    pongFrame.push_back(127);
+                    for (int i = 7; i >= 0; --i) {
+                        pongFrame.push_back((payloadData.size() >> (i * 8)) & 0xFF);
+                    }
+                }
+                
+                // Add payload (echo back the ping payload)
+                pongFrame.insert(pongFrame.end(), payloadData.begin(), payloadData.end());
+                
+                // Send pong frame
+                rawSend(clientSocket, reinterpret_cast<const char*>(pongFrame.data()), pongFrame.size(), 0);
+            }
+            break;
+            
+        case 0xA: // Pong frame
+            // Ignore, we don't need to do anything
+            break;
+            
+        default:
+            std::cerr << "Unknown WebSocket opcode: " << opcode << std::endl;
+            break;
+    }
 }
 
 std::vector<uint8_t> SimpleSocketServer::encodeWebSocketFrame(const std::string& message) {
@@ -326,7 +409,7 @@ std::vector<uint8_t> SimpleSocketServer::encodeWebSocketFrame(const std::string&
     
     // Payload length
     if (message.length() <= 125) {
-        frame.push_back(message.length());
+        frame.push_back(static_cast<uint8_t>(message.length()));
     } else if (message.length() <= 65535) {
         frame.push_back(126);
         frame.push_back((message.length() >> 8) & 0xFF);
@@ -342,4 +425,66 @@ std::vector<uint8_t> SimpleSocketServer::encodeWebSocketFrame(const std::string&
     frame.insert(frame.end(), message.begin(), message.end());
     
     return frame;
+}
+
+std::vector<uint8_t> SimpleSocketServer::encodeBinaryWebSocketFrame(const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> frame;
+    
+    // First byte: FIN bit set, binary frame
+    frame.push_back(0x82);
+    
+    // Payload length
+    if (data.size() <= 125) {
+        frame.push_back(static_cast<uint8_t>(data.size()));
+    } else if (data.size() <= 65535) {
+        frame.push_back(126);
+        frame.push_back((data.size() >> 8) & 0xFF);
+        frame.push_back(data.size() & 0xFF);
+    } else {
+        frame.push_back(127);
+        for (int i = 7; i >= 0; --i) {
+            frame.push_back((data.size() >> (i * 8)) & 0xFF);
+        }
+    }
+    
+    // Add payload
+    frame.insert(frame.end(), data.begin(), data.end());
+    
+    return frame;
+}
+
+bool SimpleSocketServer::sendMessage(SOCKET client, const std::string& message) {
+    std::vector<uint8_t> frame = encodeWebSocketFrame(message);
+    return rawSend(client, reinterpret_cast<const char*>(frame.data()), frame.size(), 0) != SOCKET_ERROR;
+}
+
+bool SimpleSocketServer::broadcastMessage(const std::string& message) {
+    std::vector<uint8_t> frame = encodeWebSocketFrame(message);
+    
+    std::lock_guard<std::mutex> lock(_clientsMutex);
+    for (const auto& client : _clients) {
+        if (rawSend(client.first, reinterpret_cast<const char*>(frame.data()), frame.size(), 0) == SOCKET_ERROR) {
+            std::cerr << "Failed to send message to client: " << WSAGetLastError() << std::endl;
+        }
+    }
+    
+    return true;
+}
+
+bool SimpleSocketServer::sendBinaryMessage(SOCKET client, const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> frame = encodeBinaryWebSocketFrame(data);
+    return rawSend(client, reinterpret_cast<const char*>(frame.data()), frame.size(), 0) != SOCKET_ERROR;
+}
+
+bool SimpleSocketServer::broadcastBinaryMessage(const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> frame = encodeBinaryWebSocketFrame(data);
+    
+    std::lock_guard<std::mutex> lock(_clientsMutex);
+    for (const auto& client : _clients) {
+        if (rawSend(client.first, reinterpret_cast<const char*>(frame.data()), frame.size(), 0) == SOCKET_ERROR) {
+            std::cerr << "Failed to send binary message to client: " << WSAGetLastError() << std::endl;
+        }
+    }
+    
+    return true;
 }
