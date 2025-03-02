@@ -234,6 +234,279 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                else if (type == "add_app") {
+                    // Handle add application request
+                    if (!message["data"].contains("path") || !message["data"]["path"].is_string()) {
+                        response["type"] = "error";
+                        response["message"] = "Missing or invalid path field";
+                        return response;
+                    }
+                    
+                    std::string path = message["data"]["path"];
+                    std::string name;
+                    std::string appId;
+                    std::vector<std::string> arguments;
+                    
+                    // Generate a unique ID based on path if not provided
+                    if (message["data"].contains("id") && message["data"]["id"].is_string()) {
+                        appId = message["data"]["id"];
+                    } else {
+                        // Generate a unique ID from path - use a simple hash
+                        size_t hashValue = std::hash<std::string>{}(path);
+                        appId = "app_" + std::to_string(hashValue);
+                    }
+                    
+                    // Get app name from data or extract from path
+                    if (message["data"].contains("name") && message["data"]["name"].is_string()) {
+                        name = message["data"]["name"];
+                    } else {
+                        // Extract filename from path as name
+                        size_t lastSlash = path.find_last_of("/\\");
+                        if (lastSlash != std::string::npos) {
+                            name = path.substr(lastSlash + 1);
+                        } else {
+                            name = path;
+                        }
+                        
+                        // Remove extension if present
+                        size_t lastDot = name.find_last_of(".");
+                        if (lastDot != std::string::npos) {
+                            name = name.substr(0, lastDot);
+                        }
+                    }
+                    
+                    // Get application type
+                    ApplicationLauncher::ApplicationType appType = ApplicationLauncher::ApplicationType::EXECUTABLE;
+                    if (message["data"].contains("type") && message["data"]["type"].is_string()) {
+                        std::string typeStr = message["data"]["type"];
+                        appType = ApplicationLauncher::stringToApplicationType(typeStr);
+                    } else {
+                        // Auto-detect type based on path
+                        if (path.find("http://") == 0 || path.find("https://") == 0) {
+                            appType = ApplicationLauncher::ApplicationType::WEBSITE;
+                        }
+                    }
+                    
+                    // Get arguments if provided
+                    if (message["data"].contains("arguments") && message["data"]["arguments"].is_array()) {
+                        try {
+                            arguments = message["data"]["arguments"].get<std::vector<std::string>>();
+                        } catch (...) {
+                            arguments.clear();
+                        }
+                    }
+                    
+                    // Create and register the application
+                    ApplicationLauncher::Application newApp;
+                    newApp.id = appId;
+                    newApp.name = name;
+                    newApp.path = path;
+                    newApp.type = appType;
+                    newApp.arguments = arguments;
+                    
+                    bool registered = false;
+                    try {
+                        registered = ApplicationLauncher::registerApplication(newApp);
+                    } catch (const std::exception& e) {
+                        response["type"] = "add_app_result";
+                        response["success"] = false;
+                        response["error"] = e.what();
+                        return response;
+                    }
+                    
+                    response["type"] = "add_app_result";
+                    response["success"] = registered;
+                    if (registered) {
+                        response["app_id"] = appId;
+                        
+                        // Save the updated app list to config file
+                        std::string configPath = "./config/apps.json";
+                        // Try to get config path from environment
+                        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+                        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+                            configPath = configPathIt->second;
+                        }
+                        
+                        // Ensure directory exists
+                        std::string directory = configPath.substr(0, configPath.find_last_of("/\\"));
+                        if (!directory.empty()) {
+                            CreateDirectoryA(directory.c_str(), NULL);
+                        }
+                        
+                        ApplicationLauncher::saveApplicationsToFile(configPath);
+                    } else {
+                        response["error"] = "Failed to register application. ID may already exist.";
+                    }
+                }
+                else if (type == "remove_app") {
+                    // Handle remove application request
+                    if (!message["data"].contains("id") || !message["data"]["id"].is_string()) {
+                        response["type"] = "error";
+                        response["message"] = "Missing or invalid app ID";
+                        return response;
+                    }
+                    
+                    std::string appId = message["data"]["id"];
+                    bool removed = false;
+                    
+                    try {
+                        removed = ApplicationLauncher::unregisterApplication(appId);
+                    } catch (const std::exception& e) {
+                        response["type"] = "remove_app_result";
+                        response["success"] = false;
+                        response["error"] = e.what();
+                        return response;
+                    }
+                    
+                    response["type"] = "remove_app_result";
+                    response["success"] = removed;
+                    response["app_id"] = appId;
+                    
+                    if (removed) {
+                        // Save the updated app list to config file
+                        std::string configPath = "./config/apps.json";
+                        // Try to get config path from environment
+                        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+                        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+                            configPath = configPathIt->second;
+                        }
+                        
+                        ApplicationLauncher::saveApplicationsToFile(configPath);
+                    } else {
+                        response["error"] = "Application not found";
+                    }
+                }
+                else if (type == "save_config") {
+                    // Handle save configuration request
+                    std::string configPath = "./config/apps.json";
+                    
+                    // Check if custom path is provided
+                    if (message["data"].contains("path") && message["data"]["path"].is_string()) {
+                        configPath = message["data"]["path"];
+                    } else {
+                        // Try to get config path from environment
+                        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+                        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+                            configPath = configPathIt->second;
+                        }
+                    }
+                    
+                    // Ensure directory exists
+                    std::string directory = configPath.substr(0, configPath.find_last_of("/\\"));
+                    if (!directory.empty()) {
+                        CreateDirectoryA(directory.c_str(), NULL);
+                    }
+                    
+                    bool saved = false;
+                    try {
+                        saved = ApplicationLauncher::saveApplicationsToFile(configPath);
+                    } catch (const std::exception& e) {
+                        response["type"] = "save_config_result";
+                        response["success"] = false;
+                        response["error"] = e.what();
+                        return response;
+                    }
+                    
+                    response["type"] = "save_config_result";
+                    response["success"] = saved;
+                    response["config_path"] = configPath;
+                    
+                    if (!saved) {
+                        response["error"] = "Failed to save configuration file";
+                    }
+                }
+                else if (type == "load_config") {
+                    // Handle load configuration request
+                    std::string configPath = "./config/apps.json";
+                    
+                    // Check if custom path is provided
+                    if (message["data"].contains("path") && message["data"]["path"].is_string()) {
+                        configPath = message["data"]["path"];
+                    } else {
+                        // Try to get config path from environment
+                        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+                        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+                            configPath = configPathIt->second;
+                        }
+                    }
+                    
+                    bool loaded = false;
+                    try {
+                        loaded = ApplicationLauncher::loadApplicationsFromFile(configPath);
+                    } catch (const std::exception& e) {
+                        response["type"] = "load_config_result";
+                        response["success"] = false;
+                        response["error"] = e.what();
+                        return response;
+                    }
+                    
+                    response["type"] = "load_config_result";
+                    response["success"] = loaded;
+                    response["config_path"] = configPath;
+                    
+                    if (!loaded) {
+                        response["error"] = "Failed to load configuration file";
+                    }
+                }
+                else if (type == "upload_config") {
+                    // Handle config file upload
+                    if (!message["data"].contains("content") || !message["data"]["content"].is_string()) {
+                        response["type"] = "error";
+                        response["message"] = "Missing or invalid config content";
+                        return response;
+                    }
+                    
+                    std::string configContent = message["data"]["content"];
+                    std::string configPath = "./config/apps.json";
+                    
+                    // Check if custom path is provided
+                    if (message["data"].contains("path") && message["data"]["path"].is_string()) {
+                        configPath = message["data"]["path"];
+                    } else {
+                        // Try to get config path from environment
+                        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+                        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+                            configPath = configPathIt->second;
+                        }
+                    }
+                    
+                    // Ensure directory exists
+                    std::string directory = configPath.substr(0, configPath.find_last_of("/\\"));
+                    if (!directory.empty()) {
+                        CreateDirectoryA(directory.c_str(), NULL);
+                    }
+                    
+                    // Write content to file
+                    std::ofstream outFile(configPath);
+                    if (!outFile.is_open()) {
+                        response["type"] = "upload_config_result";
+                        response["success"] = false;
+                        response["error"] = "Failed to open config file for writing";
+                        return response;
+                    }
+                    
+                    outFile << configContent;
+                    outFile.close();
+                    
+                    // Try to load the uploaded config
+                    bool loaded = false;
+                    try {
+                        loaded = ApplicationLauncher::loadApplicationsFromFile(configPath);
+                    } catch (const std::exception& e) {
+                        response["type"] = "upload_config_result";
+                        response["success"] = false;
+                        response["error"] = std::string("File saved but failed to load: ") + e.what();
+                        return response;
+                    }
+                    
+                    response["type"] = "upload_config_result";
+                    response["success"] = loaded;
+                    response["config_path"] = configPath;
+                    
+                    if (!loaded) {
+                        response["error"] = "File saved but failed to load applications";
+                    }
+                }
                 else {
                     response["type"] = "error";
                     response["message"] = "Unknown message type: " + type;
@@ -251,6 +524,24 @@ int main(int argc, char** argv) {
             
             return response;
         });
+
+        // Create config directory if it doesn't exist
+        CreateDirectoryA("./config", NULL);
+
+        // Load applications from config file if available
+        std::string configPath = "./config/apps.json";
+        // Try to get config path from environment
+        auto configPathIt = dotenv::env.find("APP_CONFIG_PATH");
+        if (configPathIt != dotenv::env.end() && !configPathIt->second.empty()) {
+            configPath = configPathIt->second;
+        }
+
+        // Try to load applications, but don't fail if file doesn't exist
+        try {
+            ApplicationLauncher::loadApplicationsFromFile(configPath);
+        } catch (...) {
+            std::cout << "No existing configuration found, starting with default applications" << std::endl;
+        }
 
         std::cout << "Starting server on port " << port << "..." << std::endl;
 
