@@ -63,7 +63,7 @@
 ## Documentation 📚
 
 <details>
- <summary><strong>Installation Guide</strong></summary>
+ <summary><strong><a href="docs/setup/INSTALLATION_GUIDE.md">Installation Guide</a></strong></summary>
 
   #### Setup Instructions:
     - Clone the repository
