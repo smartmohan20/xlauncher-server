@@ -45,6 +45,8 @@ target_link_libraries(xlauncher-server
     PRIVATE Shell32      # For ShellExecute
     PRIVATE ws2_32
     PRIVATE crypt32
+    PRIVATE Comctl32     # For icon extraction functions
+    PRIVATE Gdi32        # For GDI functions
     ${ZLIB_LIBRARIES}
 )
 

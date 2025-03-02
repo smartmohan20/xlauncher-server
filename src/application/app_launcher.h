@@ -17,12 +17,18 @@ public:
         SYSTEM_COMMAND
     };
 
+    struct IconData {
+        std::string base64Data;
+        std::string mimeType;
+    };
+
     struct Application {
         std::string id;
         std::string name;
         std::string path;
         ApplicationType type;
         std::vector<std::string> arguments;
+        std::optional<IconData> icon;
     };
 
     // Launch an application by its ID
@@ -42,6 +48,9 @@ public:
 
     // Find application by ID
     static std::optional<Application> findApplicationById(const std::string& appId);
+
+    // Extract icon from executable file
+    static std::optional<IconData> extractIconFromPath(const std::string& path);
 
 private:
     // Internal method to launch different types of applications

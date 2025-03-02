@@ -91,11 +91,21 @@ int main(int argc, char** argv) {
                     response["apps"] = nlohmann::json::array();
                     
                     for (const auto& app : apps) {
-                        response["apps"].push_back({
+                        nlohmann::json appJson = {
                             {"id", app.id},
                             {"name", app.name},
                             {"path", app.path}
-                        });
+                        };
+                        
+                        // Add icon data if available
+                        if (app.icon.has_value()) {
+                            appJson["icon"] = {
+                                {"data", app.icon->base64Data},
+                                {"mimeType", app.icon->mimeType}
+                            };
+                        }
+                        
+                        response["apps"].push_back(appJson);
                     }
                 }
                 else {
