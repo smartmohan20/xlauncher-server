@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
             "Google Chrome", 
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", 
             ApplicationLauncher::ApplicationType::EXECUTABLE,
-            {"google.com"}
+            {"--profile-last-used", "google.com"}
         });
 
         ApplicationLauncher::registerApplication({
