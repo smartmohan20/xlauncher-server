@@ -610,3 +610,192 @@ bool ApplicationLauncher::launchSystemCommand(const Application& app) {
 
     return true;
 }
+
+// Convert ApplicationType to string
+std::string ApplicationLauncher::applicationTypeToString(ApplicationType type) {
+    switch (type) {
+        case ApplicationType::EXECUTABLE:
+            return "EXECUTABLE";
+        case ApplicationType::WEBSITE:
+            return "WEBSITE";
+        case ApplicationType::SYSTEM_COMMAND:
+            return "SYSTEM_COMMAND";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+// Convert string to ApplicationType
+ApplicationLauncher::ApplicationType ApplicationLauncher::stringToApplicationType(const std::string& typeStr) {
+    if (typeStr == "EXECUTABLE") {
+        return ApplicationType::EXECUTABLE;
+    } else if (typeStr == "WEBSITE") {
+        return ApplicationType::WEBSITE;
+    } else if (typeStr == "SYSTEM_COMMAND") {
+        return ApplicationType::SYSTEM_COMMAND;
+    }
+    
+    // Default to EXECUTABLE
+    return ApplicationType::EXECUTABLE;
+}
+
+// Unregister an application
+bool ApplicationLauncher::unregisterApplication(const std::string& appId) {
+    auto it = std::find_if(_registeredApplications.begin(), _registeredApplications.end(),
+        [&appId](const Application& app) { return app.id == appId; });
+    
+    if (it != _registeredApplications.end()) {
+        // Close the application if it's running
+        auto processIt = _applicationProcesses.find(appId);
+        if (processIt != _applicationProcesses.end()) {
+            closeApplication(appId);
+        }
+        
+        // Remove from registry
+        _registeredApplications.erase(it);
+        return true;
+    }
+    
+    return false;
+}
+
+// Save applications to config file
+bool ApplicationLauncher::saveApplicationsToFile(const std::string& filePath) {
+    try {
+        nlohmann::json jsonApps = nlohmann::json::array();
+        
+        for (const auto& app : _registeredApplications) {
+            nlohmann::json jsonApp;
+            jsonApp["id"] = app.id;
+            jsonApp["name"] = app.name;
+            jsonApp["path"] = app.path;
+            jsonApp["type"] = applicationTypeToString(app.type);
+            
+            // Save arguments
+            jsonApp["arguments"] = nlohmann::json::array();
+            for (const auto& arg : app.arguments) {
+                jsonApp["arguments"].push_back(arg);
+            }
+            
+            // Save icon if available
+            if (app.icon.has_value()) {
+                jsonApp["icon"] = {
+                    {"base64Data", app.icon->base64Data},
+                    {"mimeType", app.icon->mimeType}
+                };
+            }
+            
+            jsonApps.push_back(jsonApp);
+        }
+        
+        // Write to file
+        std::ofstream outFile(filePath);
+        if (!outFile.is_open()) {
+            std::cerr << "Failed to open file for writing: " << filePath << std::endl;
+            return false;
+        }
+        
+        outFile << jsonApps.dump(4); // Pretty print with 4-space indentation
+        outFile.close();
+        
+        std::cout << "Successfully saved " << _registeredApplications.size() << " applications to " << filePath << std::endl;
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in saveApplicationsToFile: " << e.what() << std::endl;
+        return false;
+    }
+    catch (...) {
+        std::cerr << "Unknown exception in saveApplicationsToFile" << std::endl;
+        return false;
+    }
+}
+
+// Load applications from config file
+bool ApplicationLauncher::loadApplicationsFromFile(const std::string& filePath) {
+    try {
+        // Open the file
+        std::ifstream inFile(filePath);
+        if (!inFile.is_open()) {
+            std::cerr << "Failed to open config file: " << filePath << std::endl;
+            return false;
+        }
+        
+        // Parse JSON
+        nlohmann::json jsonApps;
+        inFile >> jsonApps;
+        inFile.close();
+        
+        if (!jsonApps.is_array()) {
+            std::cerr << "Invalid config file format: root element must be an array" << std::endl;
+            return false;
+        }
+        
+        // Clear existing applications
+        _registeredApplications.clear();
+        
+        // Process each application
+        for (const auto& jsonApp : jsonApps) {
+            try {
+                if (!jsonApp.contains("id") || !jsonApp.contains("name") || !jsonApp.contains("path")) {
+                    std::cerr << "Skipping invalid application entry: missing required fields" << std::endl;
+                    continue;
+                }
+                
+                Application app;
+                app.id = jsonApp["id"];
+                app.name = jsonApp["name"];
+                app.path = jsonApp["path"];
+                
+                // Get application type
+                if (jsonApp.contains("type")) {
+                    app.type = stringToApplicationType(jsonApp["type"]);
+                } else {
+                    // Determine type based on path
+                    if (app.path.find("http://") == 0 || app.path.find("https://") == 0) {
+                        app.type = ApplicationType::WEBSITE;
+                    } else {
+                        app.type = ApplicationType::EXECUTABLE;
+                    }
+                }
+                
+                // Get arguments
+                if (jsonApp.contains("arguments") && jsonApp["arguments"].is_array()) {
+                    for (const auto& arg : jsonApp["arguments"]) {
+                        app.arguments.push_back(arg);
+                    }
+                }
+                
+                // Get icon if available
+                if (jsonApp.contains("icon") && jsonApp["icon"].is_object() && 
+                    jsonApp["icon"].contains("base64Data") && jsonApp["icon"].contains("mimeType")) {
+                    IconData iconData;
+                    iconData.base64Data = jsonApp["icon"]["base64Data"];
+                    iconData.mimeType = jsonApp["icon"]["mimeType"];
+                    app.icon = iconData;
+                } else {
+                    // Try to extract icon from path
+                    app.icon = extractIconFromPath(app.path);
+                }
+                
+                // Register application
+                _registeredApplications.push_back(app);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Error processing application: " << e.what() << std::endl;
+                // Continue with next application
+            }
+        }
+        
+        std::cout << "Successfully loaded " << _registeredApplications.size() << " applications from " << filePath << std::endl;
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in loadApplicationsFromFile: " << e.what() << std::endl;
+        return false;
+    }
+    catch (...) {
+        std::cerr << "Unknown exception in loadApplicationsFromFile" << std::endl;
+        return false;
+    }
+}
