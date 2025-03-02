@@ -18,6 +18,16 @@
 </details>
 
 <details>
+  <summary><strong>⚙️ Application Management</strong></summary>
+
+  #### Feature Overview:
+    - Dynamic application list management
+    - Windows-based settings interface
+    - Add/remove application configurations
+    - Persistent application parameter storage
+</details>
+
+<details>
   <summary><strong>🌐 Remote Screen Control</strong></summary>
 
   #### Feature Overview:
@@ -26,16 +36,6 @@
     - Keyboard input simulation
     - Touch screen device support
     - Browser-based remote desktop access
-</details>
-
-<details>
-  <summary><strong>⚙️ Application Management</strong></summary>
-
-  #### Feature Overview:
-    - Dynamic application list management
-    - Windows-based settings interface
-    - Add/remove application configurations
-    - Persistent application parameter storage
 </details>
 
 <details>
