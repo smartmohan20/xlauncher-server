@@ -58,6 +58,21 @@ public:
     // Extract icon from executable file
     static std::optional<IconData> extractIconFromPath(const std::string& path);
 
+    // Save applications to config file
+    static bool saveApplicationsToFile(const std::string& filePath);
+
+    // Load applications from config file
+    static bool loadApplicationsFromFile(const std::string& filePath);
+
+    // Convert ApplicationType to string
+    static std::string applicationTypeToString(ApplicationType type);
+
+    // Convert string to ApplicationType
+    static ApplicationType stringToApplicationType(const std::string& typeStr);
+
+    // Unregister an application
+    static bool unregisterApplication(const std::string& appId);
+
 private:
     // Internal method to launch different types of applications
     static bool launchExecutable(const Application& app);
