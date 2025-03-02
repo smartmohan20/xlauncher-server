@@ -1,4 +1,5 @@
 #include "websocket_server.h"
+#include "dotenv.h"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
@@ -60,6 +61,9 @@ SimpleSocketServer::SimpleSocketServer(int port) : _port(port), _running(false),
         std::cerr << "WSAStartup failed: " << result << std::endl;
         throw std::runtime_error("WSAStartup failed");
     }
+    
+    // Load environment variables
+    dotenv::init();
 }
 
 // Destructor
@@ -80,10 +84,19 @@ std::pair<bool, std::string> SimpleSocketServer::start() {
         return {false, "Socket creation failed: " + std::to_string(WSAGetLastError())};
     }
     
+    // Get host from environment variables
+    std::string host = "127.0.0.1"; // Default value
+    if (dotenv::env.find("HOST") != dotenv::env.end()) {
+        host = dotenv::env["HOST"];
+        std::cout << "Using HOST from environment: " << host << std::endl;
+    } else {
+        std::cout << "HOST environment variable not set, using default: " << host << std::endl;
+    }
+    
     // Set up the sockaddr structure
     sockaddr_in service;
     service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr("127.0.0.1");
+    service.sin_addr.s_addr = inet_addr(host.c_str());
     service.sin_port = htons(_port);
     
     // Bind the socket
@@ -98,7 +111,7 @@ std::pair<bool, std::string> SimpleSocketServer::start() {
         return {false, "Listen failed with error: " + std::to_string(WSAGetLastError())};
     }
     
-    std::cout << "Server listening on port " << _port << std::endl;
+    std::cout << "Server listening on " << host << ":" << _port << std::endl;
     
     _running = true;
     _serverThread = std::thread(&SimpleSocketServer::runServer, this);
