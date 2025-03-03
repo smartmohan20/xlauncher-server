@@ -79,12 +79,14 @@
   <summary><strong>Key Functionalities</strong></summary>
 
   #### Supported Actions:
+    - Application launch management
+    - Application list management
     - Remote application launching
     - Full screen control
     - Mouse cursor manipulation
     - Keyboard input
     - Touch device interaction
-    - Application list management
+
 </details>
 
 ## Contribution 🤝
