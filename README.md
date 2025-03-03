@@ -14,7 +14,7 @@
     - Background Windows service
     - Network-accessible browser-based UI
     - Remote application launching
-    - Multi-device support (Windows/Mac/Android/iPhone)
+    - Cross-Platform support (Windows/Mac/Android/iPhone)
 </details>
 
 <details>
