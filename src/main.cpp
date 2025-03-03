@@ -5,6 +5,67 @@
 #include <iostream>
 #include <thread>
 #include <nlohmann/json.hpp>
+#include <Windows.h>
+#include <string>
+#include <Psapi.h>
+
+// Method 1: Get path of current executable
+std::string GetCurrentExecutablePath() {
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    return std::string(buffer);
+}
+
+// Method 2: Find executable path by name using Windows API
+std::string GetExecutablePathByName(const std::string& exeName) {
+    char buffer[MAX_PATH];
+    std::string result;
+    
+    // Get all process IDs
+    DWORD processes[1024], bytesReturned;
+    if (!EnumProcesses(processes, sizeof(processes), &bytesReturned)) {
+        return "";
+    }
+    
+    DWORD numProcesses = bytesReturned / sizeof(DWORD);
+    
+    // Iterate through processes
+    for (DWORD i = 0; i < numProcesses; i++) {
+        if (processes[i] == 0) continue;
+        
+        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processes[i]);
+        if (hProcess) {
+            if (GetModuleFileNameExA(hProcess, NULL, buffer, MAX_PATH)) {
+                std::string processName = buffer;
+                
+                // Extract just the filename from the path
+                size_t pos = processName.find_last_of('\\');
+                std::string fileName = (pos != std::string::npos) ? processName.substr(pos + 1) : processName;
+                
+                if (_stricmp(fileName.c_str(), exeName.c_str()) == 0) {
+                    result = processName;
+                    CloseHandle(hProcess);
+                    break;
+                }
+            }
+            CloseHandle(hProcess);
+        }
+    }
+    
+    return result;
+}
+
+// Method 3: Using CreateProcess to query executable path
+std::string FindExecutablePathByCreateProcess(const std::string& fileName) {
+    char buffer[MAX_PATH];
+    LPSTR filePart;
+    
+    if (SearchPathA(NULL, fileName.c_str(), ".exe", MAX_PATH, buffer, &filePart)) {
+        return std::string(buffer);
+    }
+    
+    return "";
+}
 
 int main(int argc, char** argv) {
     try {
@@ -237,13 +298,39 @@ int main(int argc, char** argv) {
                 }
                 else if (type == "add_app") {
                     // Handle add application request
-                    if (!message["data"].contains("path") || !message["data"]["path"].is_string()) {
+                    std::string path;
+                    std::string fileName;
+                    
+                    // Check if path is provided
+                    if (message["data"].contains("path") && message["data"]["path"].is_string()) {
+                        path = message["data"]["path"];
+                    }
+                    // Check if fileName is provided but path isn't
+                    else if (message["data"].contains("fileName") && message["data"]["fileName"].is_string()) {
+                        fileName = message["data"]["fileName"];
+                        
+                        // Try to find the executable path using the fileName
+                        path = FindExecutablePathByCreateProcess(fileName);
+                        
+                        // If that fails, try the process enumeration method
+                        if (path.empty()) {
+                            path = GetExecutablePathByName(fileName);
+                        }
+                        
+                        // If still no path found, return error
+                        if (path.empty()) {
+                            response["type"] = "error";
+                            response["message"] = "Could not find executable path for: " + fileName;
+                            return response;
+                        }
+                    }
+                    // Neither path nor fileName provided
+                    else {
                         response["type"] = "error";
-                        response["message"] = "Missing or invalid path field";
+                        response["message"] = "Missing or invalid path or fileName field";
                         return response;
                     }
                     
-                    std::string path = message["data"]["path"];
                     std::string name;
                     std::string appId;
                     std::vector<std::string> arguments;
@@ -260,6 +347,14 @@ int main(int argc, char** argv) {
                     // Get app name from data or extract from path
                     if (message["data"].contains("name") && message["data"]["name"].is_string()) {
                         name = message["data"]["name"];
+                    } else if (!fileName.empty()) {
+                        // Use the provided fileName as the name
+                        name = fileName;
+                        // Remove extension if present
+                        size_t lastDot = name.find_last_of(".");
+                        if (lastDot != std::string::npos) {
+                            name = name.substr(0, lastDot);
+                        }
                     } else {
                         // Extract filename from path as name
                         size_t lastSlash = path.find_last_of("/\\");
@@ -276,7 +371,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     
-                    // Get application type
+                    // Rest of the code remains the same
                     ApplicationLauncher::ApplicationType appType = ApplicationLauncher::ApplicationType::EXECUTABLE;
                     if (message["data"].contains("type") && message["data"]["type"].is_string()) {
                         std::string typeStr = message["data"]["type"];
