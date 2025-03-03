@@ -73,6 +73,16 @@
     - Set up IXWebSocket dependencies
 </details>
 
+<details>
+ <summary><strong><a href="docs/setup/DEV_GUIDE.md">Developer Guide</a></strong></summary>
+
+  #### Command Instructions:
+    - Windows PowerShell commands
+    - Git Bash commands
+    - Setup, development, and build processes
+    - Environment configuration options
+</details>
+
 ## Usage 📖
 
 <details>
