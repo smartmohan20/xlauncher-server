@@ -8,24 +8,24 @@ This guide provides instructions for setting up, building, and running the XLaun
 
 ```powershell
 cd scripts
-.\build-server.bat setup              # Clone submodules and setup vcpkg
-.\build-server.bat deps               # Install dependencies using vcpkg
-.\build-server.bat build [build-type] # Build the project
-.\build-server.bat run                # Run the server
-.\build-server.bat clean              # Clean build directory
-.\build-server.bat all                # Setup, install deps, and build
-.\build-server.bat help               # Show help information
+.\run-server.bat setup              # Clone submodules and setup vcpkg
+.\run-server.bat deps               # Install dependencies using vcpkg
+.\run-server.bat build [build-type] # Build the project
+.\run-server.bat run                # Run the server
+.\run-server.bat clean              # Clean build directory
+.\run-server.bat all                # Setup, install deps, and build
+.\run-server.bat help               # Show help information
 ```
 
 ### For Git Bash
 
 ```bash
 cd scripts
-./build-server.bat setup              # Clone submodules and setup vcpkg
-./build-server.bat deps               # Install dependencies using vcpkg
-./build-server.bat build [build-type] # Build the project
-./build-server.bat run                # Run the server
-./build-server.bat clean              # Clean build directory
-./build-server.bat all                # Setup, install deps, and build
-./build-server.bat help               # Show help information
+./run-server.bat setup              # Clone submodules and setup vcpkg
+./run-server.bat deps               # Install dependencies using vcpkg
+./run-server.bat build [build-type] # Build the project
+./run-server.bat run                # Run the server
+./run-server.bat clean              # Clean build directory
+./run-server.bat all                # Setup, install deps, and build
+./run-server.bat help               # Show help information
 ```
